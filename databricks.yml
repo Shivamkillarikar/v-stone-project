@@ -1,0 +1,61 @@
+bundle:
+  name: meridian_project
+
+variables:
+  catalog_name:
+    description: "Target Unity Catalog"
+    default: "meridian_tnn" 
+  trainee_id:
+    description: "Two-digit trainee number"
+    default: "tnn"          
+
+resources:
+  pipelines:
+    meridian_dlt:
+      name: meridian_${var.trainee_id}_pipeline
+      serverless: true
+      target: "bronze" 
+      development: true
+      catalog: ${var.catalog_name}
+      libraries:
+        - notebook:
+            path: "./src/01-Landing & Bronze/03-Lakeflow Spark Declarative Pipeline (Bronze).ipynb"
+        - notebook:
+            path: "./src/02-Silver & Visual Data Prep/01-cleaning and transformation.ipynb"
+
+  jobs:
+    meridian_orchestrator:
+      name: meridian_${var.trainee_id}_job
+      tasks:
+        - task_key: run_simulator
+          notebook_task:
+            notebook_path: "./src/01-Landing & Bronze/02-Landing Phase.ipynb"
+
+        
+        - task_key: run_pipeline
+          depends_on:
+            - task_key: run_simulator
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.meridian_dlt.id}
+            full_refresh: false
+
+  jobs:
+    gold_returns_report_job:
+      name: "Gold Layer Returns Report - Visual Prep"
+      tasks:
+        - task_key: "visual_data_prep"
+          notebook_task:
+            notebook_path: "src/02-Silver & Visual Data Prep/02-lakeflow_designer.ipynb"
+            base_parameters:
+              min_return_quantity: "1"
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-e09865f2-ce79.cloud.databricks.com
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-e09865f2-ce79.cloud.databricks.com
