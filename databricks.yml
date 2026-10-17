@@ -22,6 +22,8 @@ resources:
             path: "./src/01-Landing & Bronze/03-Lakeflow Spark Declarative Pipeline (Bronze).ipynb"
         - notebook:
             path: "./src/02-Silver & Visual Data Prep/01-cleaning and transformation.ipynb"
+        - notebook:
+            path: "./src/03-Gold & Metric Views/gold.ipynb"
 
   jobs:
     meridian_orchestrator:
