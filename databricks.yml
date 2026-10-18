@@ -1,20 +1,88 @@
+# bundle:
+#   name: meridian_project
+
+# variables:
+#   catalog_name:
+#     description: "Target Unity Catalog"
+#     default: "meridian_tnn" 
+#   trainee_id:
+#     description: "Two-digit trainee number"
+#     default: "tnn"          
+
+# resources:
+#   pipelines:
+#     meridian_dlt:
+#       name: meridian_${var.trainee_id}_pipeline
+#       serverless: true
+#       target: "bronze" 
+#       development: true
+#       catalog: ${var.catalog_name}
+#       libraries:
+#         - notebook:
+#             path: "./src/01-Landing & Bronze/03-Lakeflow Spark Declarative Pipeline (Bronze).ipynb"
+#         - notebook:
+#             path: "./src/02-Silver & Visual Data Prep/01-cleaning and transformation.ipynb"
+#         - notebook:
+#             path: "./src/03-Gold & Metric Views/gold.ipynb"
+
+#   jobs:
+#     meridian_orchestrator:
+#       name: meridian_${var.trainee_id}_job
+#       tasks:
+#         - task_key: run_simulator
+#           notebook_task:
+#             notebook_path: "./src/01-Landing & Bronze/02-Landing Phase.ipynb"
+
+        
+#         - task_key: run_pipeline
+#           depends_on:
+#             - task_key: run_simulator
+#           pipeline_task:
+#             pipeline_id: ${resources.pipelines.meridian_dlt.id}
+#             full_refresh: false
+
+#   jobs:
+#     gold_returns_report_job:
+#       name: "Gold Layer Returns Report - Visual Prep"
+#       tasks:
+#         - task_key: "visual_data_prep"
+#           notebook_task:
+#             notebook_path: "src/02-Silver & Visual Data Prep/02-lakeflow_designer.ipynb"
+#             base_parameters:
+#               min_return_quantity: "1"
+
+# targets:
+#   dev:
+#     mode: development
+#     default: true
+#     workspace:
+#       host: https://dbc-e09865f2-ce79.cloud.databricks.com
+#   prod:
+#     mode: production
+#     workspace:
+#       host: https://dbc-e09865f2-ce79.cloud.databricks.com
+
+
 bundle:
   name: meridian_project
 
 variables:
   catalog_name:
     description: "Target Unity Catalog"
-    default: "meridian_tnn" 
+    default: "meridian_tnn"
   trainee_id:
-    description: "Two-digit trainee number"
-    default: "tnn"          
+    description: "Two-digit trainee number (e.g., t08)"
+    default: "tnn"
+  warehouse_id:
+    description: "SQL Warehouse ID for SQL tasks"
+    default: "YOUR_SQL_WAREHOUSE_ID" # Compute -> SQL Warehouses -> your warehouse overview
 
 resources:
   pipelines:
-    meridian_dlt:
+    meridian_pipeline:
       name: meridian_${var.trainee_id}_pipeline
       serverless: true
-      target: "bronze" 
+      target: "bronze"
       development: true
       catalog: ${var.catalog_name}
       libraries:
@@ -28,28 +96,67 @@ resources:
   jobs:
     meridian_orchestrator:
       name: meridian_${var.trainee_id}_job
+
+      # Step 4: Job Parameter for manual or automatic batch landing
+      parameters:
+        - name: batch_id
+          default: "AUTO"
+
+      # Step 6: Schedule (Paused in dev target, unpaused in prod)
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: "UTC"
+        pause_status: PAUSED
+
+      # Step 6: Email notification on run failure
+      email_notifications:
+        on_failure:
+          - ${workspace.current_user.userName}
+
       tasks:
-        - task_key: run_simulator
+        # Task 1: Governance Setup
+        - task_key: task_governance_setup
+          notebook_task:
+            notebook_path: "./src/04-Governance/Governance.dbquery.ipynb"
+            base_parameters:
+              catalog: ${var.catalog_name}
+
+        # Task 2: File Landing Simulator (Receives batch_id parameter)
+        - task_key: task_landing_simulator
+          depends_on:
+            - task_key: task_governance_setup
           notebook_task:
             notebook_path: "./src/01-Landing & Bronze/02-Landing Phase.ipynb"
+            base_parameters:
+              batch_id: "{{job.parameters.batch_id}}"
+              catalog: ${var.catalog_name}
 
-        
-        - task_key: run_pipeline
+        # Task 3: DLT Pipeline Execution
+        - task_key: task_dlt_pipeline
           depends_on:
-            - task_key: run_simulator
+            - task_key: task_landing_simulator
           pipeline_task:
-            pipeline_id: ${resources.pipelines.meridian_dlt.id}
+            pipeline_id: ${resources.pipelines.meridian_pipeline.id}
             full_refresh: false
 
-  jobs:
-    gold_returns_report_job:
-      name: "Gold Layer Returns Report - Visual Prep"
-      tasks:
-        - task_key: "visual_data_prep"
+        # Task 4: Metric Views & Visual Data Prep
+        - task_key: task_visual_data_prep
+          depends_on:
+            - task_key: task_dlt_pipeline
           notebook_task:
-            notebook_path: "src/02-Silver & Visual Data Prep/02-lakeflow_designer.ipynb"
+            notebook_path: "./src/02-Silver & Visual Data Prep/02-lakeflow_designer.ipynb"
             base_parameters:
               min_return_quantity: "1"
+              catalog: ${var.catalog_name}
+
+        # Task 5: Data Quality Gate (Breaks run if checks fail)
+        - task_key: task_data_quality_gate
+          depends_on:
+            - task_key: task_visual_data_prep
+          notebook_task:
+            notebook_path: "./src/05-Ops/01-data_quality_gate.ipynb"
+            base_parameters:
+              catalog: ${var.catalog_name}
 
 targets:
   dev:
@@ -57,7 +164,23 @@ targets:
     default: true
     workspace:
       host: https://dbc-e09865f2-ce79.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/dev
+    variables:
+      catalog_name: "meridian_tnn"
+    run_as:
+      user_name: ${workspace.current_user.userName}
+
   prod:
     mode: production
     workspace:
       host: https://dbc-e09865f2-ce79.cloud.databricks.com
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/prod
+    variables:
+      catalog_name: "meridian_prod"
+    run_as:
+      user_name: ${workspace.current_user.userName}
+    resources:
+      jobs:
+        meridian_orchestrator:
+          schedule:
+            pause_status: UNPAUSED
