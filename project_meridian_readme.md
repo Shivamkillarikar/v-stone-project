@@ -1,6 +1,6 @@
 # Project Meridian: Retail Analytics (Package 08 - Returns)
 
-**Trainee ID:** `tnn`  
+**Trainee ID:** `t08`  
 **Catalog:** `meridian_tnn`  
 **Deployment Environment:** Databricks Free Edition (Serverless)  
 **Reference Documents:** 
